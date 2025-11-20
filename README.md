@@ -25,22 +25,35 @@ Real-time cryptocurrency price tracking, wallet balance checking, and smart cont
 ## 📋 Commands
 
 ### Price Check
-price eth
-price btc
-price bnb
-price ethereum
+
+    price eth
+
+    price btc
+
+    price bnb
+
+    price ethereum
 
 ### Wallet Balance
-wallet eth 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
-wallet bsc 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
-wallet polygon 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
-wallet arbitrum 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
-wallet base 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
+
+    wallet eth 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
+
+    wallet bsc 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
+
+    wallet polygon 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
+
+    wallet arbitrum 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
+
+    wallet base 0x742d35Cc6634C0532925a3b844Bc9e7595f42471
 
 ### Contract Scanning
-scan_contract eth 0x2170Ed0880ac9A755fd29B2688956BD959F933F8
-scan_contract bsc 0x55d398326f99059fF775485246999027B3197955
-scan_contract polygon 0x2791Bca1f2de4661ED88A30C99a7a9449Aa84174
+
+    scan_contract eth 0x2170Ed0880ac9A755fd29B2688956BD959F933F8
+
+    scan_contract bsc 0x55d398326f99059fF775485246999027B3197955
+
+    scan_contract polygon 0x2791Bca1f2de4661ED88A30C99a7a9449Aa84174
+
 ## 🔧 Installation
 
 ### Prerequisites
@@ -72,29 +85,6 @@ nano .env
 4. **Run agent**
 ```bash
 go run main.go
-```
-
-## 🚀 Running 24/7 with tmux
-
-### Start agent in background
-```bash
-tmux new-session -d -s crypto-agent
-tmux send-keys -t crypto-agent "cd ~/my-onchain-agent && go run main.go" Enter
-```
-
-### View logs
-```bash
-tmux attach-session -t crypto-agent
-```
-
-### Stop agent
-```bash
-tmux kill-session -t crypto-agent
-```
-
-### Auto-restart on crash
-```bash
-tmux send-keys -t crypto-agent "cd ~/my-onchain-agent && while true; do go run main.go; sleep 5; done" Enter
 ```
 
 ## 📚 Example Test Cases
@@ -138,16 +128,21 @@ Expected Output:
 | Base | ✅ Active | mainnet.base.org |
 
 ## 🔐 Environment Variables
+
 RPC Endpoints (Required)
-ETH_RPC_URL=              # Ethereum mainnet RPC
-BSC_RPC_URL=              # Binance Smart Chain RPC
-POLYGON_RPC_URL=          # Polygon mainnet RPC
-ARBITRUM_RPC_URL=         # Arbitrum One RPC
-BASE_RPC_URL=             # Base mainnet RPC
+
+    ETH_RPC_URL=              # Ethereum mainnet RPC
+    BSC_RPC_URL=              # Binance Smart Chain RPC
+    POLYGON_RPC_URL=          # Polygon mainnet RPC
+    ARBITRUM_RPC_URL=         # Arbitrum One RPC
+    BASE_RPC_URL=             # Base mainnet RPC
+
 Teneo Configuration (Required)
-PRIVATE_KEY=              # Your private key
-NFT_TOKEN_ID=             # NFT token ID
-OWNER_ADDRESS=            # Owner wallet address
+
+    PRIVATE_KEY=              # Your private key
+    NFT_TOKEN_ID=             # NFT token ID
+    OWNER_ADDRESS=            # Owner wallet address
+
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -172,6 +167,6 @@ This project is built with:
 
 ---
 
-**Built by:** Your Name/Team  
+**Built by:** Yunaiko  
 **Framework:** Teneo Protocol  
 **Last Updated:** 2025-11-20
