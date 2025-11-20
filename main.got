@@ -1,0 +1,299 @@
+package main
+
+import (
+"context"
+"encoding/json"
+"fmt"
+"io"
+"log"
+"math/big"
+"net/http"
+"os"
+"strings"
+"time"
+
+"github.com/TeneoProtocolAI/teneo-agent-sdk/pkg/agent"
+"github.com/ethereum/go-ethereum/common"
+"github.com/ethereum/go-ethereum/ethclient"
+"github.com/joho/godotenv"
+
+)
+
+type CryptoOnchainIntelV2Agent struct {
+lastPrices map[string]float64
+}
+
+// map simbol populer ke Coingecko ID
+var symbolToID = map[string]string{
+"eth":   "ethereum",
+"btc":   "bitcoin",
+"bnb":   "binancecoin",
+"matic": "matic-network",
+"arb":   "arbitrum",
+"base":  "base",
+}
+
+// Aman terhadap nil pointer
+func coingeckoPrice(id string) (float64, string, error) {
+u := fmt.Sprintf("[https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd](https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd)", id)
+req, _ := http.NewRequest("GET", u, nil)
+req.Header.Set("User-Agent", "teneo-agent/crypto-intel")
+client := &http.Client{Timeout: 10 * time.Second}
+resp, err := client.Do(req)
+if err != nil {
+return 0, "", fmt.Errorf("failed fetch price: %w", err)
+}
+defer resp.Body.Close()
+if resp.StatusCode != 200 {
+body, _ := io.ReadAll(resp.Body)
+return 0, "", fmt.Errorf("coingecko status %d: %s", resp.StatusCode, string(body))
+}
+var data map[string]map[string]float64
+if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+return 0, "", fmt.Errorf("decode error: %w", err)
+}
+
+lc := strings.ToLower(id)
+val, ok := data[lc]
+if !ok || val == nil {
+	j, _ := json.Marshal(data)
+	return 0, "", fmt.Errorf("price not found for '%s' (raw: %s)", id, string(j))
+}
+p, ok := val["usd"]
+if !ok {
+	j, _ := json.Marshal(val)
+	return 0, "", fmt.Errorf("USD price not found for '%s' (raw: %s)", id, string(j))
+}
+return p, fmt.Sprintf("$%.6g", p), nil
+
+}
+
+func ethBalance(ctx context.Context, rpc string, address string) (string, error) {
+client, err := ethclient.DialContext(ctx, rpc)
+if err != nil {
+return "", fmt.Errorf("failed connect rpc: %w", err)
+}
+defer client.Close()
+addr := common.HexToAddress(address)
+bal, err := client.BalanceAt(ctx, addr, nil)
+if err != nil {
+return "", fmt.Errorf("failed get balance: %w", err)
+}
+fbal := new(big.Float).SetInt(bal)
+ethValue := new(big.Float).Quo(fbal, big.NewFloat(1e18))
+return fmt.Sprintf("%s ETH", ethValue.Text('f', 18)), nil
+}
+
+func isContract(ctx context.Context, rpc string, address string) (bool, int, error) {
+client, err := ethclient.DialContext(ctx, rpc)
+if err != nil {
+return false, 0, fmt.Errorf("failed connect rpc: %w", err)
+}
+defer client.Close()
+addr := common.HexToAddress(address)
+code, err := client.CodeAt(ctx, addr, nil)
+if err != nil {
+return false, 0, fmt.Errorf("failed get code: %w", err)
+}
+return len(code) > 0, len(code), nil
+}
+
+func getRPC(chain string) string {
+switch strings.ToLower(chain) {
+case "eth", "ethereum":
+return os.Getenv("ETH_RPC_URL")
+case "bsc", "binance":
+return os.Getenv("BSC_RPC_URL")
+case "polygon", "matic":
+return os.Getenv("POLYGON_RPC_URL")
+case "arbitrum":
+return os.Getenv("ARBITRUM_RPC_URL")
+case "base":
+return os.Getenv("BASE_RPC_URL")
+default:
+return ""
+}
+}
+
+const priceAlertThreshold = 0.10
+
+func (a *CryptoOnchainIntelV2Agent) checkPumpDump(id string, price float64) string {
+if a.lastPrices == nil {
+a.lastPrices = make(map[string]float64)
+}
+oldPrice, exists := a.lastPrices[id]
+a.lastPrices[id] = price
+if !exists {
+return ""
+}
+change := (price - oldPrice) / oldPrice
+if change >= priceAlertThreshold {
+return fmt.Sprintf("🚀 Pump detected for %s: %.2f%% increase (%.6g -> %.6g)", id, change*100, oldPrice, price)
+} else if change <= -priceAlertThreshold {
+return fmt.Sprintf("📉 Dump detected for %s: %.2f%% decrease (%.6g -> %.6g)", id, change*100, oldPrice, price)
+}
+return ""
+}
+
+func contractRiskScan(ctx context.Context, rpc string, addr string) string {
+client, err := ethclient.DialContext(ctx, rpc)
+if err != nil {
+return fmt.Sprintf("failed connect rpc: %v", err)
+}
+defer client.Close()
+code, err := client.CodeAt(ctx, common.HexToAddress(addr), nil)
+if err != nil || len(code) == 0 {
+return fmt.Sprintf("No contract code or failed fetch: %v", err)
+}
+return fmt.Sprintf("Contract %s exists (code size %d bytes). Risk scan placeholder.", addr, len(code))
+}
+
+func (a *CryptoOnchainIntelV2Agent) ProcessTask(ctx context.Context, task string) (res string, err error) {
+defer func() {
+if r := recover(); r != nil {
+log.Printf("Recovered from panic in ProcessTask: %v", r)
+res = "Agent recovered from panic, please retry the command"
+}
+}()
+
+log.Printf("Processing task: %s", task)
+ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+defer cancel()
+
+task = strings.TrimSpace(task)
+task = strings.TrimPrefix(task, "/")
+parts := strings.Fields(task)
+if len(parts) == 0 {
+	return "No command provided. Available commands: price, wallet, scan_contract", nil
+}
+
+cmd := strings.ToLower(parts[0])
+args := parts[1:]
+
+switch cmd {
+case "price":
+	if len(args) == 0 {
+		return "Usage: price <coin_id_or_symbol>. Example: price ethereum", nil
+	}
+	id := strings.ToLower(args[0])
+	if mapped, ok := symbolToID[id]; ok {
+		id = mapped
+	}
+	priceVal, priceStr, err := coingeckoPrice(id)
+	if err != nil {
+		return fmt.Sprintf("Error fetching price: %v", err), nil
+	}
+	alert := a.checkPumpDump(id, priceVal)
+	if alert != "" {
+		return fmt.Sprintf("Price for %s: %s\n%s", id, priceStr, alert), nil
+	}
+	return fmt.Sprintf("Price for %s: %s", id, priceStr), nil
+
+case "wallet":
+	var chain, addr string
+	if len(args) == 1 {
+		chain = "eth"
+		addr = args[0]
+	} else if len(args) >= 2 {
+		chain = strings.ToLower(args[0])
+		addr = args[1]
+	} else {
+		return "Usage: wallet <chain> <0xaddress>. Example: wallet eth 0x123...", nil
+	}
+	rpc := getRPC(chain)
+	if rpc == "" {
+		return fmt.Sprintf("RPC URL for chain '%s' not configured in .env", chain), nil
+	}
+	if !common.IsHexAddress(addr) {
+		return "Invalid address format. Expected 0x...", nil
+	}
+	bal, err := ethBalance(ctx, rpc, addr)
+	if err != nil {
+		return fmt.Sprintf("Failed read balance: %v", err), nil
+	}
+	return fmt.Sprintf("[%s] Balance %s: %s", strings.ToUpper(chain), addr, bal), nil
+
+case "scan_contract":
+	var chain, addr string
+	if len(args) == 1 {
+		chain = "eth"
+		addr = args[0]
+	} else if len(args) >= 2 {
+		chain = strings.ToLower(args[0])
+		addr = args[1]
+	} else {
+		return "Usage: scan_contract <chain> <0xaddress>", nil
+	}
+	rpc := getRPC(chain)
+	if rpc == "" {
+		return fmt.Sprintf("RPC URL for chain '%s' not configured in .env", chain), nil
+	}
+	if !common.IsHexAddress(addr) {
+		return "Invalid address format. Expected 0x...", nil
+	}
+	contract, size, err := isContract(ctx, rpc, addr)
+	if err != nil {
+		return fmt.Sprintf("Scan failed: %v", err), nil
+	}
+	risk := contractRiskScan(ctx, rpc, addr)
+	if !contract {
+		return fmt.Sprintf("[%s] %s is NOT a contract (code size = %d bytes).\n%s", strings.ToUpper(chain), addr, size, risk), nil
+	}
+	return fmt.Sprintf("[%s] %s is a contract (code size = %d bytes).\n%s", strings.ToUpper(chain), addr, size, risk), nil
+
+default:
+	return fmt.Sprintf("Unknown command '%s'. Available commands: price, wallet, scan_contract", cmd), nil
+}
+
+}
+
+func main() {
+for {
+if err := runAgent(); err != nil {
+log.Printf("Agent crashed: %v. Restarting in 5 seconds...", err)
+time.Sleep(5 * time.Second)
+} else {
+break
+}
+}
+}
+
+func runAgent() error {
+_ = godotenv.Load()
+config := agent.DefaultConfig()
+
+config.Name = "Crypto Onchain Intelligence V2"
+config.Description = "Providing fast on-chain intelligence with price checks, multi-chain wallet balance, pump/dump alerts, and smart contract risk scans."
+config.Capabilities = []string{"price_check", "wallet_analysis", "contract_risk_scan", "pump_dump_alert"}
+config.PrivateKey = os.Getenv("PRIVATE_KEY")
+config.NFTTokenID = os.Getenv("NFT_TOKEN_ID")
+config.OwnerAddress = os.Getenv("OWNER_ADDRESS")
+
+missing := []string{}
+if config.PrivateKey == "" {
+	missing = append(missing, "PRIVATE_KEY")
+}
+if config.NFTTokenID == "" {
+	missing = append(missing, "NFT_TOKEN_ID")
+}
+if config.OwnerAddress == "" {
+	missing = append(missing, "OWNER_ADDRESS")
+}
+if len(missing) > 0 {
+	return fmt.Errorf("missing required env vars: %s", strings.Join(missing, ", "))
+}
+
+enhancedAgent, err := agent.NewEnhancedAgent(&agent.EnhancedAgentConfig{
+	Config:       config,
+	AgentHandler: &CryptoOnchainIntelV2Agent{},
+})
+if err != nil {
+	return err
+}
+
+log.Println("Starting Crypto Onchain Intelligence V2...")
+enhancedAgent.Run()
+return nil
+
+}
+
